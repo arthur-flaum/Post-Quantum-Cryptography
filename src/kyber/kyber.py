@@ -4,11 +4,10 @@ import os
 import time
 
 """
-The parameters defined in the FIPS 203 document.
+The parameters defined in the FIPS 203 document
 https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf
 
-Includes the ML-KEM-512, ML-KEM-768, and ML-KEM-1024 parameters
-and initialised objects with them.
+Includes the ML-KEM-512, ML-KEM-768, and ML-KEM-1024 parameters and initialised objects with them
 """
 DEFAULT_PARAMETERS = {
     "ML512": {"k": 2, "eta_1": 3, "eta_2": 2, "du": 10, "dv": 4},
@@ -20,12 +19,11 @@ ML_KEM_768 = DEFAULT_PARAMETERS["ML768"]
 ML_KEM_1024 = DEFAULT_PARAMETERS["ML1024"]
 
 
-
 class ML_KEM:
     def __init__(self, parameters):
         self.q = 3329
         self.n = 256
-        self.zeta = 17 # Denotes the integer 17, which is a primitive n-th root of unity modulo q
+        self.zeta = 17  # Denotes the integer 17, which is a primitive n-th root of unity modulo q
         self.k = parameters["k"]
         self.eta_1 = parameters["eta_1"]
         self.eta_2 = parameters["eta_2"]
@@ -81,9 +79,9 @@ class ML_KEM:
         Converts a bit array (of a length that is a multiple of eight) into an array of bytes
         """
         assert len(b) % 8 == 0
-        B = [0 for _ in range(len(b)//8)]
+        B = [0 for _ in range(len(b) // 8)]
         for i in range(len(b)):
-            B[i//8] += b[i] * 2**(i % 8)
+            B[i // 8] += b[i] * 2 ** (i % 8)
         return bytes(B)
 
     def _bytes_to_bits(self, B):
@@ -106,6 +104,7 @@ class ML_KEM:
         :param F: integer array F from (Z_m)^256, where m = 2^d if d < 12 else q
         :return: byte array B from B^(32 * d)
         """
+        assert len(F) == 256
         b = []
         for i in range(self.n):
             a = F[i]
@@ -121,13 +120,14 @@ class ML_KEM:
         :param B: byte array B from B^(32 * d)
         :return: F: integer array F from (Z_m)^256, where m = 2^d if d < 12 else q
         """
-        m = 1<<d if d < 12 else self.q
+        assert len(B) == (32 * d)
+        m = 1 << d if d < 12 else self.q
         b = self._bytes_to_bits(B)
         F = []
         for i in range(self.n):
             res = 0
             for j in range(d):
-                res = (res % m) + (b[i*d+j] * 2**j) % m
+                res = (res % m) + (b[i * d + j] * 2 ** j) % m
             F.append(res)
         return F
 
@@ -136,7 +136,7 @@ class ML_KEM:
         Implementation of 4.7 in FIPS 203 (page 21)
         Compress_d(Decompress_d(y)) = y for all y from Z_(2^d) and all d < 12
         """
-        m = 2**d
+        m = 2 ** d
         if d < 12:
             y = (m / self.q) * x % m
             return self._round_int(y)
@@ -148,7 +148,7 @@ class ML_KEM:
         Implementation of 4.8 in FIPS 203 (page 21)
         Compress_d(Decompress_d(y)) = y for all y from Z_(2^d) and all d < 12
         """
-        m = 2**d
+        m = 2 ** d
         if d < 12:
             y = (self.q / m) * x
             return self._round_int(y)
@@ -171,6 +171,7 @@ class ML_KEM:
         """
         Helper function to round a float to the nearest integer
         """
+        assert x >= 0
         if ((x * 10) % 10) < 5:
             return math.floor(x)
         return math.ceil(x)
@@ -179,7 +180,9 @@ class ML_KEM:
         """
         Bit reversal of an unsigned 7-bit integer
         """
-        bin_i = bin(r & (2**7 - 1))[2:].zfill(7)
+        assert isinstance(r, int)
+        assert len(bin(r)[2:]) <= 7  # bin(r)[2:] because else it would add '0b' to the length
+        bin_i = bin(r & (2 ** 7 - 1))[2:].zfill(7)
         return int(bin_i[::-1], 2)
 
     def _xof(self, bytes32, i, j):
@@ -188,16 +191,17 @@ class ML_KEM:
         """
         input_bytes = bytes32 + i + j
         if len(input_bytes) != 34:
-            raise ValueError(
-                "Input bytes should be one 32 byte array and 2 single bytes."
-            )
+            raise ValueError("Input bytes should be one 32 byte array and 2 single bytes.")
         return shake_128(input_bytes).digest(840)
 
     def _prf(self, eta, s, b):
         """
         Pseudorandom function 4.3 in FIPS 203 (page 18)
         """
-        return shake_256(s + b).digest(64*eta)
+        input_bytes = s + b
+        if len(input_bytes) != 33:
+            raise ValueError("Input bytes should be one 32 byte array and one single byte.")
+        return shake_256(input_bytes).digest(64 * eta)
 
     def _H(self, s):
         """
@@ -226,15 +230,14 @@ class ML_KEM:
         Takes a 32-byte seed and two indices as input and outputs a pseudorandom element of T_q
         Algorithm 7 in FIPS 203 (page 23)
 
-        :param B: byte array from B^34
         :return: the coefficients of the NTT of a polynomial from (Z_q)^256
         """
         j = 0
         i = 0
         a_hat = []
         while j < self.n:
-            d1 = B[i] + self.n * (B[i+1] % 16)
-            d2 = (B[i+1] // 16) + 16 * B[i+2]
+            d1 = B[i] + self.n * (B[i + 1] % 16)
+            d2 = (B[i + 1] // 16) + 16 * B[i + 2]
             if d1 < self.q:
                 a_hat.append(d1)
                 j += 1
@@ -259,8 +262,8 @@ class ML_KEM:
             x = 0
             y = 0
             for j in range(eta):
-                x += b[2*i*eta + j]
-                y += b[2*i*eta + eta + j]
+                x += b[2 * i * eta + j]
+                y += b[2 * i * eta + eta + j]
             f.append((x - y) % self.q)
         return f
 
@@ -281,8 +284,8 @@ class ML_KEM:
                 zeta = pow(self.zeta, self._bit_rev_7(i), self.q)
                 i += 1
                 for j in range(start, start + length):
-                    t = (zeta * f_hat[j+length]) % self.q
-                    f_hat[j+length] = (f_hat[j] - t) % self.q
+                    t = (zeta * f_hat[j + length]) % self.q
+                    f_hat[j + length] = (f_hat[j] - t) % self.q
                     f_hat[j] = (f_hat[j] + t) % self.q
                 start += (2 * length)
             length >>= 1
@@ -306,14 +309,13 @@ class ML_KEM:
                 i -= 1
                 for j in range(start, start + length):
                     t = f[j]
-                    f[j] = (f[j+length] + t) % self.q
-                    f[j+length] = (zeta * (f[j+length] - t)) % self.q
+                    f[j] = (f[j + length] + t) % self.q
+                    f[j + length] = (zeta * (f[j + length] - t)) % self.q
                 start += (2 * length)
             length *= 2
         for i in range(len(f)):
             f[i] = (f[i] * 3303) % self.q
         return f
-
 
     def _multiply_ntts(self, f_hat, g_hat):
         """
@@ -324,13 +326,14 @@ class ML_KEM:
         :param g_hat: coefficients of NTT representations from (Z_q)^256
         :return: coefficients of the product of the inputs
         """
+        assert len(f_hat) == len(g_hat)
         h_hat = []
         for i in range(128):
-            c0, c1 = self._base_case_multiply(f_hat[2*i],
-                                              f_hat[2*i + 1],
-                                              g_hat[2*i],
-                                              g_hat[2*i + 1],
-                                              self.zeta**(2 * self._bit_rev_7(i) + 1))
+            c0, c1 = self._base_case_multiply(f_hat[2 * i],
+                                              f_hat[2 * i + 1],
+                                              g_hat[2 * i],
+                                              g_hat[2 * i + 1],
+                                              self.zeta ** (2 * self._bit_rev_7(i) + 1))
             h_hat.append(c0)
             h_hat.append(c1)
         return h_hat
@@ -354,6 +357,7 @@ class ML_KEM:
         for i in range(self.k):
             for j in range(self.k):
                 xof_bytes = self._xof(rho, bytes([j]), bytes([i]))
+                # noinspection PyTypeChecker
                 A_hat[i][j] = self._sample_ntt(xof_bytes)
         return A_hat
 
@@ -400,10 +404,15 @@ class ML_KEM:
         :param r: randomness as byte array from B^32
         :return: ciphertext as byte array from B^(32 * (d_u * k + d_v))
         """
+        if len(ek_pke) != 384 * self.k + 32:
+            raise ValueError(
+                f"Type check failed, ek_pke has the wrong length, expected {384 * self.k + 32} bytes and received {len(ek_pke)}")
         N = 0
         t_hat = []
         for i in range(self.k):
             t_hat.append(self._byte_decode(ek_pke[384 * i: 384 * (i + 1)]))
+        if b''.join(self._byte_encode(t_hat[i]) for i in range(self.k)) != ek_pke[:-32]:
+            raise ValueError("Modulus check failed, t_hat does not encode correctly")
         rho = ek_pke[-32:]
         A_hat = self._generate_matrix_from_seed(rho)
         y = []
@@ -447,12 +456,13 @@ class ML_KEM:
         c1, c2 = c[:n], c[n:]
         u = []
         for i in range(self.k):
-            u.append(self._decompress(self._byte_decode(c1[i * self.du * 32 : (i+1) * self.du * 32], self.du), self.du))
+            u.append(
+                self._decompress(self._byte_decode(c1[i * self.du * 32: (i + 1) * self.du * 32], self.du), self.du))
         v = self._decompress(self._byte_decode(c2, self.dv), self.dv)
         s_hat = []
         u_hat = []
         for i in range(self.k):
-            s_hat.append(self._byte_decode(dk_pke[i * 384 : (i+1) * 384]))
+            s_hat.append(self._byte_decode(dk_pke[i * 384: (i + 1) * 384]))
             u_hat.append(self._to_ntt(u[i]))
         s_mul_u_ntt = [0 for _ in range(self.n)]
         for i in range(self.k):
@@ -498,10 +508,18 @@ class ML_KEM:
         :param c: ciphertext from B^(32 * (d_u * k + d_v))
         :return: shared secret key K from B^32
         """
+        if len(c) != 32 * (self.du * self.k + self.dv):
+            raise ValueError(
+                f"ciphertext type check failed. Expected {32 * (self.du * self.k + self.dv)} bytes and obtained {len(c)}")
+        if len(dk) != 768 * self.k + 96:
+            raise ValueError(
+                f"decapsulation type check failed. Expected {768 * self.k + 96} bytes and obtained {len(dk)}")
         dk_pke = dk[: 384 * self.k]
-        ek_pke = dk[384 * self.k : 768 * self.k + 32]
-        h = dk[768 * self.k + 32 : 768 * self.k + 64]
-        z = dk[768 * self.k + 64 :]
+        ek_pke = dk[384 * self.k: 768 * self.k + 32]
+        h = dk[768 * self.k + 32: 768 * self.k + 64]
+        z = dk[768 * self.k + 64:]
+        if self._H(ek_pke) != h:
+            raise ValueError("hash check failed")
         m_prime = self._k_pke_decrypt(dk_pke, c)
         K_prime, r_prime = self._G(m_prime + h)
         K_bar = self._J(z + c)
@@ -513,7 +531,7 @@ class ML_KEM:
         Helper function to select between the bytes a or b depending on whether cond is False or True
         """
         assert len(a) == len(b)
-        out = [0] * len(a)
+        out = [0 for i in range(len(a))]
         cw = -cond % 256
         for i in range(len(a)):
             out[i] = a[i] ^ (cw & (a[i] ^ b[i]))
@@ -539,6 +557,8 @@ class ML_KEM:
         :param ek: encapsulation key from B^(384 * k + 32)
         :return: shared secret key K from B^32 and ciphertext c from B^(32 * (d_u * k + d_v))
         """
+        if len(ek) != self.k * 384 + 32:
+            raise ValueError("")
         m = self.random_bytes(32)
         K, c = self._encaps_internal(ek, m)
         return K, c
@@ -557,8 +577,9 @@ class ML_KEM:
 
 
 if __name__ == '__main__':
+    runs = 1000
     t = []
-    for i in range(1000):
+    for run in range(runs):
         t0 = time.time()
         ml = ML_KEM(ML_KEM_1024)
         encaps_key, decaps_key = ml.keygen()
@@ -570,5 +591,3 @@ if __name__ == '__main__':
     print(sum(t) / len(t))
     print(sum(t))
     print(t)
-
-
