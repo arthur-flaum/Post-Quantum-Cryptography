@@ -4,10 +4,8 @@ import os
 import time
 
 """
-The parameters defined in the FIPS 203 document
+The parameters (ML-KEM-512, ML-KEM-768, and ML-KEM-1024) defined in the FIPS 203 document
 https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf
-
-Includes the ML-KEM-512, ML-KEM-768, and ML-KEM-1024 parameters and initialised objects with them
 """
 DEFAULT_PARAMETERS = {
     "ML512": {"k": 2, "eta_1": 3, "eta_2": 2, "du": 10, "dv": 4},
@@ -30,6 +28,8 @@ class ML_KEM:
         self.du = parameters["du"]
         self.dv = parameters["dv"]
         self.random_bytes = os.urandom
+        self.zetas = [pow(self.zeta, self._bit_rev_7(i), self.q) for i in range(128)]
+        self.zetas_ntt = [pow(self.zeta, 2 * self._bit_rev_7(i) + 1, self.q) for i in range(128)]
 
     def _poly_add(self, lst, other):
         """
@@ -281,7 +281,7 @@ class ML_KEM:
         while length >= 2:
             start = 0
             while start < self.n:
-                zeta = pow(self.zeta, self._bit_rev_7(i), self.q)
+                zeta = self.zetas[i]
                 i += 1
                 for j in range(start, start + length):
                     t = (zeta * f_hat[j + length]) % self.q
@@ -305,7 +305,7 @@ class ML_KEM:
         while length <= 128:
             start = 0
             while start < self.n:
-                zeta = pow(self.zeta, self._bit_rev_7(i), self.q)
+                zeta = self.zetas[i]
                 i -= 1
                 for j in range(start, start + length):
                     t = f[j]
@@ -333,7 +333,7 @@ class ML_KEM:
                                               f_hat[2 * i + 1],
                                               g_hat[2 * i],
                                               g_hat[2 * i + 1],
-                                              self.zeta ** (2 * self._bit_rev_7(i) + 1))
+                                              self.zetas_ntt[i])
             h_hat.append(c0)
             h_hat.append(c1)
         return h_hat
@@ -531,7 +531,7 @@ class ML_KEM:
         Helper function to select between the bytes a or b depending on whether cond is False or True
         """
         assert len(a) == len(b)
-        out = [0 for i in range(len(a))]
+        out = [0 for _ in range(len(a))]
         cw = -cond % 256
         for i in range(len(a)):
             out[i] = a[i] ^ (cw & (a[i] ^ b[i]))
@@ -577,11 +577,11 @@ class ML_KEM:
 
 
 if __name__ == '__main__':
+    ml = ML_KEM(ML_KEM_1024)
     runs = 1000
     t = []
     for run in range(runs):
         t0 = time.time()
-        ml = ML_KEM(ML_KEM_1024)
         encaps_key, decaps_key = ml.keygen()
         K, c = ml.encaps(encaps_key)
         K_prime = ml.decaps(decaps_key, c)
