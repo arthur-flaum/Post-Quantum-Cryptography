@@ -1,0 +1,2 @@
+git+https://github.com/GiacomoPope/dilithium-py
+git+https://github.com/GiacomoPope/kyber-py

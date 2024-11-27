@@ -2,6 +2,7 @@ import math
 from hashlib import shake_128, shake_256, sha3_512, sha3_256
 import os
 import time
+import tracemalloc
 
 """
 The parameters (ML-KEM-512, ML-KEM-768, and ML-KEM-1024) defined in the FIPS 203 document
@@ -22,11 +23,11 @@ class ML_KEM:
         self.q = 3329
         self.n = 256
         self.zeta = 17  # Denotes the integer 17, which is a primitive n-th root of unity modulo q
-        self.k = parameters["k"]
-        self.eta_1 = parameters["eta_1"]
-        self.eta_2 = parameters["eta_2"]
-        self.du = parameters["du"]
-        self.dv = parameters["dv"]
+        self.k = parameters["k"] # dimensions of the matrix A and the dimensions of vectors s, e, e1 and y
+        self.eta_1 = parameters["eta_1"] # specify the distribution for generating the vectors s, e and y
+        self.eta_2 = parameters["eta_2"] # specify the distribution for generating the vectors e1 and e2
+        self.du = parameters["du"] # serve as parameters and inputs for the functions compress, decompress, byte_encode, and byte_decode in k_pke_encrypt and k_pke_decrypt
+        self.dv = parameters["dv"] # serve as parameters and inputs for the functions compress, decompress, byte_encode, and byte_decode in k_pke_encrypt and k_pke_decrypt
         self.random_bytes = os.urandom
         self.zetas = [pow(self.zeta, self._bit_rev_7(i), self.q) for i in range(128)]
         self.zetas_ntt = [pow(self.zeta, 2 * self._bit_rev_7(i) + 1, self.q) for i in range(128)]
@@ -361,6 +362,17 @@ class ML_KEM:
                 A_hat[i][j] = self._sample_ntt(xof_bytes)
         return A_hat
 
+    def _select_bytes(self, a, b, cond):
+        """
+        Helper function to select between the bytes a or b depending on whether cond is False or True
+        """
+        assert len(a) == len(b)
+        out = [0 for _ in range(len(a))]
+        cw = -cond % 256
+        for i in range(len(a)):
+            out[i] = a[i] ^ (cw & (a[i] ^ b[i]))
+        return bytes(out)
+
     def _k_pke_keygen(self, d):
         """
         Uses randomness to generate an encryption key and a corresponding decryption key
@@ -371,7 +383,8 @@ class ML_KEM:
         """
         rho, sigma = self._G(d + bytes([self.k]))
         N = 0
-        A_hat = self._generate_matrix_from_seed(rho)
+        self.A_hat = self._generate_matrix_from_seed(rho)
+        A_hat = self.A_hat
         s = []
         for i in range(self.k):
             s.append(self._sample_poly_cbd(self.eta_1, self._prf(self.eta_1, sigma, bytes([N]))))
@@ -413,8 +426,8 @@ class ML_KEM:
             t_hat.append(self._byte_decode(ek_pke[384 * i: 384 * (i + 1)]))
         if b''.join(self._byte_encode(t_hat[i]) for i in range(self.k)) != ek_pke[:-32]:
             raise ValueError("Modulus check failed, t_hat does not encode correctly")
-        rho = ek_pke[-32:]
-        A_hat = self._generate_matrix_from_seed(rho)
+        # rho = ek_pke[-32:]
+        A_hat = self.A_hat
         y = []
         for i in range(self.k):
             y.append(self._sample_poly_cbd(self.eta_1, self._prf(self.eta_1, r, N.to_bytes(1, 'big'))))
@@ -526,17 +539,6 @@ class ML_KEM:
         c_prime = self._k_pke_encrypt(ek_pke, m_prime, r_prime)
         return self._select_bytes(K_bar, K_prime, c == c_prime)
 
-    def _select_bytes(self, a, b, cond):
-        """
-        Helper function to select between the bytes a or b depending on whether cond is False or True
-        """
-        assert len(a) == len(b)
-        out = [0 for _ in range(len(a))]
-        cw = -cond % 256
-        for i in range(len(a)):
-            out[i] = a[i] ^ (cw & (a[i] ^ b[i]))
-        return bytes(out)
-
     def keygen(self):
         """
         Generates an encapsulation key and a corresponding decapsulation key
@@ -575,19 +577,69 @@ class ML_KEM:
         K_prime = self._decaps_internal(dk, c)
         return K_prime
 
-
-if __name__ == '__main__':
-    ml = ML_KEM(ML_KEM_1024)
-    runs = 1000
-    t = []
+def test_runtime(runs, parameters):
+    ml = ML_KEM(parameters)
+    total_time = []
+    keygen_time = []
+    encaps_time = []
+    decaps_time = []
     for run in range(runs):
         t0 = time.time()
         encaps_key, decaps_key = ml.keygen()
-        K, c = ml.encaps(encaps_key)
-        K_prime = ml.decaps(decaps_key, c)
         t1 = time.time()
+        K, c = ml.encaps(encaps_key)
+        t2 = time.time()
+        K_prime = ml.decaps(decaps_key, c)
+        t3 = time.time()
         assert K == K_prime
-        t.append(t1 - t0)
-    print(sum(t) / len(t))
-    print(sum(t))
-    print(t)
+        total_time.append(t3 - t0)
+        keygen_time.append(t1 - t0)
+        encaps_time.append(t2 - t1)
+        decaps_time.append(t3 - t2)
+    print("NUMBER OF ITERATIONS: ", runs)
+    print("\n######## TOTAL TIME ########")
+    print("average time: ", sum(total_time) / len(total_time))
+    print("total time: ", sum(total_time))
+    print("number of iterations per second: ", 1 / (sum(total_time) / len(total_time)))
+    #print(total_time)
+
+    print("\n######## KEY GENERATION TIME ########")
+    print("average time: ", sum(keygen_time) / len(keygen_time))
+    print("total time: ", sum(keygen_time))
+    print("number of iterations per second: ", 1 / (sum(keygen_time) / len(keygen_time)))
+    #print(keygen_time)
+
+    print("\n######## ENCAPSULATION TIME ########")
+    print("average time: ", sum(encaps_time) / len(encaps_time))
+    print("total time: ", sum(encaps_time))
+    print("number of iterations per second: ", 1 / (sum(encaps_time) / len(encaps_time)))
+    #print(encaps_time)
+
+    print("\n######## DECAPSULATION TIME ########")
+    print("average time: ", sum(decaps_time) / len(decaps_time))
+    print("total time: ", sum(decaps_time))
+    print("number of iterations per second: ", 1 / (sum(decaps_time) / len(decaps_time)))
+    #print(decaps_time)
+
+def test_memory_use(parameters):
+    ml = ML_KEM(parameters)
+
+    tracemalloc.start()
+    encaps_key, decaps_key = ml.keygen()
+    print(tracemalloc.get_traced_memory())
+    tracemalloc.stop()
+
+    tracemalloc.start()
+    K, c = ml.encaps(encaps_key)
+    print(tracemalloc.get_traced_memory())
+    tracemalloc.stop()
+
+    tracemalloc.start()
+    K_prime = ml.decaps(decaps_key, c)
+    assert K == K_prime
+    print(tracemalloc.get_traced_memory())
+    tracemalloc.stop()
+
+if __name__ == '__main__':
+    test_runtime(1000, ML_KEM_1024)
+    #test_memory_use(ML_KEM_1024)

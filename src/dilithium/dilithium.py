@@ -2,7 +2,12 @@ import math
 import os
 from hashlib import shake_128, shake_256
 import time
+import tracemalloc
 
+"""
+The parameters (ML-DSA-44, ML-DSA-65, and ML-DSA-87) defined in the FIPS 204 document
+https://nvlpubs.nist.gov/nistpubs/fips/nist.fips.204.pdf
+"""
 DEFAULT_PARAMETERS = {
     "ML_DSA_44": {
         "d": 13,  # number of bits dropped from t
@@ -41,9 +46,6 @@ DEFAULT_PARAMETERS = {
 ML_DSA_44 = DEFAULT_PARAMETERS["ML_DSA_44"]
 ML_DSA_65 = DEFAULT_PARAMETERS["ML_DSA_65"]
 ML_DSA_87 = DEFAULT_PARAMETERS["ML_DSA_87"]
-
-
-
 
 
 class ML_DSA:
@@ -298,7 +300,7 @@ class ML_DSA:
         tmp = 8
         s = self._H(rho, 229)
         h = self._bytes_to_bits(s[:tmp])
-        for i in range(self.n - self.tau, self.n): # put n - 1 instead n to the end range
+        for i in range(self.n - self.tau, self.n):
             j = s[tmp : tmp+1]
             tmp += 1
             while j[0] > i:
@@ -508,7 +510,8 @@ class ML_DSA:
     def _ml_dsa_keygen_internal(self, xi):
         bytes_output = self._H(xi + self._int_to_bytes(self.k, 1) + self._int_to_bytes(self.l, 1), 128)
         rho, rho_prime, K = bytes_output[:32], bytes_output[32:96], bytes_output[96: 128]
-        A_hat = self._expand_A(rho)
+        self.A_hat = self._expand_A(rho)
+        A_hat = self.A_hat
         s1, s2 = self._expand_S(rho_prime)
         s1_hat = [self._to_ntt(s1[i]) for i in range(self.l)]
         As1 = [self._from_ntt(self._matrix_vector_ntt(A_hat, s1_hat)[i]) for i in range(self.k)]
@@ -524,7 +527,7 @@ class ML_DSA:
         s1_hat = [self._to_ntt(s1[i]) for i in range(self.l)]
         s2_hat = [self._to_ntt(s2[i]) for i in range(self.k)]
         t0_hat = [self._to_ntt(t0[i]) for i in range(self.k)]
-        A_hat = self._expand_A(rho)
+        A_hat = self.A_hat
         mu = self._H(tr + M_prime, 64)
         rho_prime = self._H(K + rnd + mu, 64)
         kappa = 0
@@ -569,7 +572,7 @@ class ML_DSA:
         c_tilde, z, h = self._sig_decode(sigma)
         if h is False:
             return False
-        A_hat = self._expand_A(rho)
+        A_hat = self.A_hat
         tr = self._H(pk, 64)
         mu = self._H(tr + M_prime, 64)
         c = self._sample_in_ball(c_tilde)
@@ -587,7 +590,7 @@ class ML_DSA:
 
     def keygen(self):
         """
-        Generates a public-private key pair
+        Generates a public key and a corresponding secret key
 
         :return:
         """
@@ -608,25 +611,72 @@ class ML_DSA:
         M_prime = self._int_to_bytes(0, 1) + self._int_to_bytes(len(ctx), 1) + ctx + M
         return self._ml_dsa_verify_internal(pk, M_prime, sigma)
 
-
-
-if __name__ == "__main__":
-    ml = ML_DSA(ML_DSA_87)
-    runs = 1
-    t = []
+def test_runtime(runs, parameters):
+    ml = ML_DSA(parameters)
+    total_time = []
+    keygen_time = []
+    sign_time = []
+    verify_time = []
     for run in range(runs):
         message = os.urandom(1568)
         t0 = time.time()
         pk, sk = ml.keygen()
-        print(len(pk))
-        print(len(sk))
-        sigma = ml.sign(sk, message)
-        print(len(sigma))
-        verify = ml.verify(pk, message, sigma)
         t1 = time.time()
+        sigma = ml.sign(sk, message)
+        t2 = time.time()
+        verify = ml.verify(pk, message, sigma)
+        t3 = time.time()
         assert verify is True
-        t.append(t1 - t0)
-    print(sum(t) / len(t))
-    print(sum(t))
-    print(t)
+        total_time.append(t3 - t0)
+        keygen_time.append(t1 - t0)
+        sign_time.append(t2 - t1)
+        verify_time.append(t3 - t2)
+    print("NUMBER OF ITERATIONS: ", runs)
+    print("\n######## TOTAL TIME ########")
+    print("average time: ", sum(total_time) / len(total_time))
+    print("total time: ", sum(total_time))
+    print("number of iterations per second: ", 1 / (sum(total_time) / len(total_time)))
+    #print(total_time)
 
+    print("\n######## KEY GENERATION TIME ########")
+    print("average time: ", sum(keygen_time) / len(keygen_time))
+    print("total time: ", sum(keygen_time))
+    print("number of iterations per second: ", 1 / (sum(keygen_time) / len(keygen_time)))
+    #print(keygen_time)
+
+    print("\n######## SIGNING TIME ########")
+    print("average time: ", sum(sign_time) / len(sign_time))
+    print("total time: ", sum(sign_time))
+    print("number of iterations per second: ", 1 / (sum(sign_time) / len(sign_time)))
+    #print(sign_time)
+
+    print("\n######## VERIFYING TIME ########")
+    print("average time: ", sum(verify_time) / len(verify_time))
+    print("total time: ", sum(verify_time))
+    print("number of iterations per second: ", 1 / (sum(verify_time) / len(verify_time)))
+    #print(verify_time)
+
+def test_memory_use(parameters):
+    ml = ML_DSA(parameters)
+    message = os.urandom(1568)
+
+    tracemalloc.start()
+    pk, sk = ml.keygen()
+    print(tracemalloc.get_traced_memory())
+    tracemalloc.stop()
+
+    tracemalloc.start()
+    sigma = ml.sign(sk, message)
+    print(tracemalloc.get_traced_memory())
+    tracemalloc.stop()
+
+    tracemalloc.start()
+    verify = ml.verify(pk, message, sigma)
+    assert verify is True
+    print(tracemalloc.get_traced_memory())
+    tracemalloc.stop()
+
+
+if __name__ == "__main__":
+    test_runtime(1000, ML_DSA_87)
+    #test_memory_use(ML_DSA_87)
